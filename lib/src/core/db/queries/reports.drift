@@ -1,0 +1,114 @@
+import '../tables/payments.dart';
+import '../tables/payment_allocations.dart';
+import '../tables/expenses.dart';
+
+-- Báo cáo tài chính (mục 5 đặc tả).
+--
+-- Viết SQL thuần thay vì query builder vì phần gom nhóm `strftime` theo
+-- ngày/tháng/quý/năm đọc bằng SQL rõ hơn hẳn.
+--
+-- Drift lưu DateTime thành epoch GIÂY nên `'unixepoch'` là modifier đúng. Các
+-- cột ngày ghi ở nửa đêm UTC nên không cần `'localtime'` — báo cáo do đó không
+-- đổi kết quả theo múi giờ máy.
+--
+-- Bộ lọc bãi dùng **Dart placeholder** `$lotFilter` chứ không phải
+-- `:lotId IS NULL OR lot_id = :lotId`. Hai lý do: kiểu suy ra đúng là "có thể
+-- không lọc", và quan trọng hơn — dạng `OR ... IS NULL` khiến SQLite bỏ qua
+-- index `(lot_id, paid_at)`, còn placeholder sinh ra đúng vị từ cần thiết.
+
+-- ═══════════ Doanh thu cách 1: THỰC THU (mục 4 đặc tả) ═══════════
+-- Toàn bộ tiền nhận trong kỳ tính vào kỳ đó, bất kể bao phủ tháng nào.
+
+revenueCashByDay($lotFilter = TRUE):
+SELECT strftime('%Y-%m-%d', paid_at, 'unixepoch') AS ym, SUM(amount) AS total
+FROM payments
+WHERE voided_at IS NULL AND paid_at >= :from AND paid_at < :to AND $lotFilter
+GROUP BY ym ORDER BY ym;
+
+revenueCashByMonth($lotFilter = TRUE):
+SELECT strftime('%Y-%m', paid_at, 'unixepoch') AS ym, SUM(amount) AS total
+FROM payments
+WHERE voided_at IS NULL AND paid_at >= :from AND paid_at < :to AND $lotFilter
+GROUP BY ym ORDER BY ym;
+
+revenueCashByQuarter($lotFilter = TRUE):
+SELECT strftime('%Y', paid_at, 'unixepoch') || '-Q' ||
+       ((CAST(strftime('%m', paid_at, 'unixepoch') AS INTEGER) + 2) / 3) AS ym,
+       SUM(amount) AS total
+FROM payments
+WHERE voided_at IS NULL AND paid_at >= :from AND paid_at < :to AND $lotFilter
+GROUP BY ym ORDER BY ym;
+
+revenueCashByYear($lotFilter = TRUE):
+SELECT strftime('%Y', paid_at, 'unixepoch') AS ym, SUM(amount) AS total
+FROM payments
+WHERE voided_at IS NULL AND paid_at >= :from AND paid_at < :to AND $lotFilter
+GROUP BY ym ORDER BY ym;
+
+-- ═══════════ Doanh thu cách 2: PHÂN BỔ theo tháng (mục 4 đặc tả) ═══════════
+-- Cùng hình dạng truy vấn với thực thu, chỉ khác bảng nguồn — đó chính là lý do
+-- phân bổ được vật chất hoá sẵn thay vì tính động lúc chạy báo cáo.
+
+revenueAccrualByMonth($lotFilter = TRUE):
+SELECT a.period_month AS ym, SUM(a.amount) AS total
+FROM payment_allocations a
+JOIN payments p ON p.id = a.payment_id AND p.voided_at IS NULL
+WHERE a.period_month >= :fromYm AND a.period_month <= :toYm AND $lotFilter
+GROUP BY ym ORDER BY ym;
+
+revenueAccrualByQuarter($lotFilter = TRUE):
+SELECT substr(a.period_month, 1, 4) || '-Q' ||
+       ((CAST(substr(a.period_month, 6, 2) AS INTEGER) + 2) / 3) AS ym,
+       SUM(a.amount) AS total
+FROM payment_allocations a
+JOIN payments p ON p.id = a.payment_id AND p.voided_at IS NULL
+WHERE a.period_month >= :fromYm AND a.period_month <= :toYm AND $lotFilter
+GROUP BY ym ORDER BY ym;
+
+revenueAccrualByYear($lotFilter = TRUE):
+SELECT substr(a.period_month, 1, 4) AS ym, SUM(a.amount) AS total
+FROM payment_allocations a
+JOIN payments p ON p.id = a.payment_id AND p.voided_at IS NULL
+WHERE a.period_month >= :fromYm AND a.period_month <= :toYm AND $lotFilter
+GROUP BY ym ORDER BY ym;
+
+-- ═══════════ Chi phí (mục 5 đặc tả) ═══════════
+-- Gom theo `period_month` (tháng kế toán) chứ không theo `incurred_on`, để hoá
+-- đơn điện tháng 8 trả ngày 03/09 vẫn nằm ở tháng 8.
+
+expensesByMonth($lotFilter = TRUE):
+SELECT period_month AS ym, SUM(amount) AS total
+FROM expenses
+WHERE deleted_at IS NULL AND period_month >= :fromYm AND period_month <= :toYm
+  AND $lotFilter
+GROUP BY ym ORDER BY ym;
+
+expensesByQuarter($lotFilter = TRUE):
+SELECT substr(period_month, 1, 4) || '-Q' ||
+       ((CAST(substr(period_month, 6, 2) AS INTEGER) + 2) / 3) AS ym,
+       SUM(amount) AS total
+FROM expenses
+WHERE deleted_at IS NULL AND period_month >= :fromYm AND period_month <= :toYm
+  AND $lotFilter
+GROUP BY ym ORDER BY ym;
+
+expensesByYear($lotFilter = TRUE):
+SELECT substr(period_month, 1, 4) AS ym, SUM(amount) AS total
+FROM expenses
+WHERE deleted_at IS NULL AND period_month >= :fromYm AND period_month <= :toYm
+  AND $lotFilter
+GROUP BY ym ORDER BY ym;
+
+expensesByDay($lotFilter = TRUE):
+SELECT strftime('%Y-%m-%d', incurred_on, 'unixepoch') AS ym, SUM(amount) AS total
+FROM expenses
+WHERE deleted_at IS NULL AND incurred_on >= :from AND incurred_on < :to
+  AND $lotFilter
+GROUP BY ym ORDER BY ym;
+
+expensesByCategory($lotFilter = TRUE):
+SELECT category, SUM(amount) AS total
+FROM expenses
+WHERE deleted_at IS NULL AND period_month >= :fromYm AND period_month <= :toYm
+  AND $lotFilter
+GROUP BY category ORDER BY total DESC;

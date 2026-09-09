@@ -1,0 +1,15 @@
+targets:
+  $default:
+    builders:
+      drift_dev:
+        options:
+          # Lưu DateTime thành epoch GIÂY (mặc định của drift).
+          # Khai báo tường minh vì mọi truy vấn báo cáo dùng modifier
+          # `'unixepoch'` của strftime — đổi sang lưu dạng TEXT là toàn bộ
+          # phần gom nhóm theo tháng/quý/năm sai lặng lẽ.
+          store_date_time_values_as_text: false
+          named_parameters: true
+          sql:
+            dialect: sqlite
+            options:
+              version: "3.45"

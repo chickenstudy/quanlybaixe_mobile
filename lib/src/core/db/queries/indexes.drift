@@ -1,0 +1,40 @@
+import '../tables/lots.dart';
+import '../tables/vehicles.dart';
+import '../tables/payments.dart';
+import '../tables/payment_allocations.dart';
+import '../tables/recurring_cost_templates.dart';
+import '../tables/expenses.dart';
+import '../tables/activity_log.dart';
+
+-- Chỉ số cho danh sách và bộ lọc xe (mục 8 đặc tả).
+CREATE INDEX idx_vehicles_lot_status ON vehicles (lot_id, status, deleted_at);
+CREATE INDEX idx_vehicles_period_end ON vehicles (current_period_end);
+CREATE INDEX idx_vehicles_plate_norm ON vehicles (plate_normalized);
+CREATE INDEX idx_vehicles_owner_fold ON vehicles (owner_name_fold);
+CREATE INDEX idx_vehicles_phone_digits ON vehicles (phone_digits);
+
+-- Chặn đăng ký trùng một biển số đang hoạt động trong cùng một bãi.
+-- Chỉ số bộ phận: xe đã rời bãi hoặc đã xoá thì biển số dùng lại được.
+CREATE UNIQUE INDEX uq_vehicles_active_plate ON vehicles (lot_id, plate_normalized)
+  WHERE status = 0 AND deleted_at IS NULL;
+
+-- Doanh thu thực thu: lọc theo bãi và ngày thu, bỏ biên lai đã huỷ.
+CREATE INDEX idx_payments_vehicle ON payments (vehicle_id, period_end);
+CREATE INDEX idx_payments_lot_paid ON payments (lot_id, paid_at) WHERE voided_at IS NULL;
+CREATE INDEX idx_payments_paid ON payments (paid_at) WHERE voided_at IS NULL;
+
+-- Doanh thu phân bổ: gom nhóm theo tháng kế toán.
+CREATE INDEX idx_alloc_month ON payment_allocations (period_month);
+CREATE INDEX idx_alloc_lot_month ON payment_allocations (lot_id, period_month);
+
+-- Chi phí.
+CREATE INDEX idx_expenses_lot_month ON expenses (lot_id, period_month) WHERE deleted_at IS NULL;
+CREATE INDEX idx_expenses_incurred ON expenses (incurred_on) WHERE deleted_at IS NULL;
+
+-- KHOÁ IDEMPOTENT của bộ vật chất hoá chi phí cố định.
+-- Nhờ chỉ số này, `INSERT OR IGNORE` chạy bao nhiêu lần cũng ra cùng một trạng
+-- thái, không cần cờ trạng thái hay tác vụ nền nào.
+CREATE UNIQUE INDEX uq_expense_template_month ON expenses (source_template_id, period_month)
+  WHERE source_template_id IS NOT NULL;
+
+CREATE INDEX idx_log_at ON activity_log (at DESC);
